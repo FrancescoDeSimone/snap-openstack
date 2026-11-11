@@ -74,7 +74,7 @@ def resize(
     jhelper = JujuHelper(deployment.juju_controller)
 
     # A resize changes the configuration the services run with; make sure the
-    # stored config-file overrides still validate before touching the cloud.
+    # stored service overrides still validate before touching the cloud.
     check_stale_overrides(deployment, console, fail=True)
 
     plan: list = []

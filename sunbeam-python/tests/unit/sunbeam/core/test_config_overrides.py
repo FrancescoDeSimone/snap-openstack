@@ -13,7 +13,12 @@ from rich.console import Console
 
 from sunbeam.clusterd.service import ConfigItemNotFoundException
 from sunbeam.core import config_overrides as co
-from sunbeam.core.juju import ActionFailedException, JujuException, JujuWaitException
+from sunbeam.core.juju import (
+    ActionFailedException,
+    ApplicationNotFoundException,
+    JujuException,
+    JujuWaitException,
+)
 
 
 class FakeCluster:
@@ -85,12 +90,45 @@ class TestStore:
         assert co.read_overrides(client) == {}
 
     def test_get_missing_raises(self, client):
-        with pytest.raises(co.ConfigOverridesError, match="no config-file override"):
+        with pytest.raises(co.ConfigOverridesError, match="no service override"):
             co.get_override(client, "glance")
 
     def test_remove_missing_raises(self, client):
-        with pytest.raises(co.ConfigOverridesError, match="no config-file override"):
+        with pytest.raises(co.ConfigOverridesError, match="no service override"):
             co.remove_override(client, "glance")
+
+    def test_set_override_half_replaces_one_half(self, client):
+        co.set_override(client, "glance", co.make_record(SAMPLE_CONFIG, SAMPLE_POLICY))
+
+        record = co.set_override_half(client, "glance", "policy", "policy: new\n")
+
+        assert record["config"] == SAMPLE_CONFIG
+        assert record["policy"] == "policy: new\n"
+        assert record["enabled"] is False
+        assert co.read_overrides(client)["glance"] == record
+
+    def test_set_override_half_adds_missing_record(self, client):
+        record = co.set_override_half(client, "glance", "config", SAMPLE_CONFIG)
+
+        assert record["config"] == SAMPLE_CONFIG
+        assert record["policy"] is None
+        assert co.get_override(client, "glance")["config"] == SAMPLE_CONFIG
+
+    def test_set_override_half_clearing_last_half_drops_record(self, client):
+        co.set_override(client, "glance", co.make_record(None, SAMPLE_POLICY))
+
+        record = co.set_override_half(client, "glance", "policy", None)
+
+        assert record["config"] is None
+        assert record["policy"] is None
+        assert co.read_overrides(client) == {}
+        assert client.cluster.store[co.CONFIG_FILE_OVERRIDES_KEY] == json.dumps(
+            {"overrides": {}}
+        )
+
+    def test_set_override_half_unknown_half(self, client):
+        with pytest.raises(ValueError, match="unknown override half"):
+            co.set_override_half(client, "glance", "other", SAMPLE_CONFIG)
 
     def test_make_record_policy_only(self):
         record = co.make_record(None, SAMPLE_POLICY)
@@ -112,6 +150,17 @@ class TestValidationResult:
         assert result.errors == []
         assert result.warnings == ["w1"]
         assert result.checks == {"ini": True}
+
+    def test_parse_validation_result_summary_and_details(self):
+        result = co.parse_validation_result(
+            {
+                "valid": "true",
+                "summary": "configuration overrides are valid: policy=ok",
+                "details": '{"policy": {"status": "ok"}}',
+            }
+        )
+        assert result.summary == "configuration overrides are valid: policy=ok"
+        assert result.details == {"policy": {"status": "ok"}}
 
     def test_parse_validation_result_invalid(self):
         result = co.parse_validation_result(
@@ -212,6 +261,17 @@ class TestValidateOverrides:
 
         with pytest.raises(co.ConfigOverridesError, match="policy-override"):
             co.check_charm_support(jhelper, "glance", policy=True)
+
+    def test_check_charm_support_missing_application(self):
+        """``juju resources`` reports a missing app like a charm without them."""
+        jhelper = _mock_jhelper()
+        jhelper.get_application_resources.side_effect = json.JSONDecodeError(
+            "Expecting value", "", 0
+        )
+        jhelper.get_application.side_effect = ApplicationNotFoundException("gone")
+
+        with pytest.raises(co.ConfigOverridesError, match="is not deployed in model"):
+            co.check_charm_support(jhelper, "nope")
 
     def test_check_charm_support_without_resources_listing(self):
         """A charm that declares no resources prints nothing, not JSON."""
@@ -454,7 +514,9 @@ class TestCheckStaleOverrides:
         validate.return_value = [("glance", ["unknown policy rules: get_images"])]
         console = self._console()
 
-        with pytest.raises(co.ConfigOverridesError, match="glance"):
+        with pytest.raises(
+            co.ConfigOverridesError, match="service override validation"
+        ):
             co.check_stale_overrides(Mock(), console, fail=True)
 
         assert "get_images" in console.file.getvalue()
@@ -468,7 +530,8 @@ class TestCheckStaleOverrides:
 
         output = console.file.getvalue()
         assert "no longer validates" in output
-        assert "config-file override get glance" in output
+        assert "sunbeam cluster config show image" in output
+        assert "sunbeam cluster policy show image" in output
 
     @patch("sunbeam.core.config_overrides.validate_enabled_overrides")
     def test_silent_when_everything_validates(self, validate):

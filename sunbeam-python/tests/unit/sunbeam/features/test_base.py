@@ -639,7 +639,7 @@ class TestEnableDisableFeature:
         mocker.patch(
             "sunbeam.features.interface.v1.base.check_stale_overrides",
             side_effect=ConfigOverridesError(
-                "config-file override validation failed for: glance"
+                "service override validation failed for: glance"
             ),
         )
 

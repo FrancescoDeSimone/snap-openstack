@@ -19,6 +19,7 @@ from sunbeam.clusterd.service import (
     ConfigItemNotFoundException,
 )
 from sunbeam.commands import backup_restore as backup_restore_cmds
+from sunbeam.commands import overrides as overrides_cmds
 from sunbeam.commands import refresh as refresh_cmds
 from sunbeam.commands import resize as resize_cmds
 from sunbeam.commands.configure import (
@@ -249,6 +250,8 @@ class LocalProvider(ProviderBase):
         cluster.add_command(resize_cmds.resize)
         cluster.add_command(refresh_cmds.refresh)
         cluster.add_command(backup_restore_cmds.backup_group)
+        cluster.add_command(overrides_cmds.config_group)
+        cluster.add_command(overrides_cmds.policy_group)
 
     def deployment_type(self) -> Tuple[str, Type[Deployment]]:
         """Retrieve the deployment type and class."""

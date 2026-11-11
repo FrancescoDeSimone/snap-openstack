@@ -1,9 +1,9 @@
 # SPDX-FileCopyrightText: 2026 - Canonical Ltd
 # SPDX-License-Identifier: Apache-2.0
 
-"""Helpers to manage per-service config-file overrides.
+"""Helpers to manage per-service config and policy overrides.
 
-Config-file overrides let operators inject an INI config file (and an optional
+Service overrides let operators inject an INI config file (and an optional
 oslo.policy YAML) into an OpenStack service charm. The files travel as juju
 file resources (``config-override`` / ``policy-override``) attached with
 ``juju attach-resource``; an attached resource can never be detached, so an
@@ -34,11 +34,13 @@ from sunbeam.core.juju import (
     POLICY_OVERRIDE_FILENAME,
     POLICY_OVERRIDE_RESOURCE,
     ActionFailedException,
+    ApplicationNotFoundException,
     JujuException,
     JujuHelper,
     JujuWaitException,
 )
 from sunbeam.core.openstack import OPENSTACK_MODEL
+from sunbeam.core.service_names import display_name
 from sunbeam.errors import SunbeamException
 
 if TYPE_CHECKING:
@@ -63,7 +65,7 @@ APPLY_SETTLE_TIMEOUT = 300
 
 
 class ConfigOverridesError(SunbeamException):
-    """Raised for any config-file override related error."""
+    """Raised for any service override related error."""
 
 
 @dataclass
@@ -74,6 +76,8 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     checks: dict[str, Any] = field(default_factory=dict)
+    summary: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 def content_sha256(config: str | None, policy: str | None) -> str:
@@ -114,7 +118,7 @@ def get_override(client, app: str) -> dict:
     overrides = read_overrides(client)
     if app not in overrides:
         raise ConfigOverridesError(
-            f"no config-file override stored for application {app!r}"
+            f"no service override stored for application {app!r}"
         )
     return overrides[app]
 
@@ -126,12 +130,32 @@ def set_override(client, app: str, record: dict) -> None:
     write_overrides(client, overrides)
 
 
+def set_override_half(client, app: str, half: str, text: str | None) -> dict:
+    """Replace one half of the stored override, keeping the other half.
+
+    :raises ValueError: for a half that is not ``config`` or ``policy``.
+    """
+    if half not in ("config", "policy"):
+        raise ValueError(f"unknown override half {half!r}")
+    stored = read_overrides(client)
+    record = stored.get(app, {})
+    config = text if half == "config" else record.get("config")
+    policy = text if half == "policy" else record.get("policy")
+    new_record = make_record(config, policy)
+    if config is None and policy is None:
+        if app in stored:
+            remove_override(client, app)
+    else:
+        set_override(client, app, new_record)
+    return new_record
+
+
 def remove_override(client, app: str) -> None:
     """Delete the stored record for an application."""
     overrides = read_overrides(client)
     if app not in overrides:
         raise ConfigOverridesError(
-            f"no config-file override stored for application {app!r}"
+            f"no service override stored for application {app!r}"
         )
     del overrides[app]
     write_overrides(client, overrides)
@@ -185,6 +209,8 @@ def parse_validation_result(results: dict) -> ValidationResult:
         errors=_parse_json_list(results.get("errors")),
         warnings=_parse_json_list(results.get("warnings")),
         checks=_parse_json_dict(results.get("checks")),
+        summary=str(results.get("summary") or ""),
+        details=_parse_json_dict(results.get("details")),
     )
 
 
@@ -198,7 +224,17 @@ def _declared_resources(jhelper: JujuHelper, app: str, model: str) -> set[str]:
     except json.JSONDecodeError:
         # A charm that declares no resources makes ``juju resources`` print
         # nothing, which is not JSON: no resources, not a broken listing.
-        return set()
+        resources = []
+    if not resources:
+        # ``juju resources`` answers a missing application the same way as one
+        # without resources (rc 0, "No resources to display."): ask the model
+        # so the caller hears "not deployed" instead of "no such resource".
+        try:
+            jhelper.get_application(app, model)
+        except (ApplicationNotFoundException, JujuException) as e:
+            raise ConfigOverridesError(
+                f"application {app!r} is not deployed in model {model!r}"
+            ) from e
     return {str(r.get("name", "")) for r in resources}
 
 
@@ -207,7 +243,7 @@ def _require_resource(resources: set[str], app: str, resource: str) -> None:
         raise ConfigOverridesError(
             f"charm deployed for application {app!r} does not declare the "
             f"{resource!r} resource; refresh to a charm revision that "
-            "supports config-file overrides"
+            "supports service overrides"
         )
 
 
@@ -402,7 +438,9 @@ def validate_enabled_overrides(
                 errors.append(str(e))
                 continue
             if not result.valid:
-                errors.extend(result.errors or ["override no longer valid"])
+                errors.extend(
+                    result.errors or [result.summary or "override no longer valid"]
+                )
         if errors:
             failures.append((app, errors))
     return failures
@@ -431,13 +469,13 @@ def check_stale_overrides(
         for app, errors in failures:
             console.print(f"[red]error:[/red] {app}: {'; '.join(errors)}")
         raise ConfigOverridesError(
-            "config-file override validation failed for "
+            "service override validation failed for "
             + ", ".join(app for app, _ in failures)
         )
     for app, errors in failures:
         console.print(
-            f"[yellow]warning:[/yellow] config-file override for {app} no "
+            f"[yellow]warning:[/yellow] service override for {display_name(app)} no "
             f"longer validates: {'; '.join(errors)}\n"
-            f"Inspect it with `sunbeam config-file override get {app}` and "
-            f"fix or disable it."
+            f"Inspect it with `sunbeam cluster config show {display_name(app)}` or "
+            f"`sunbeam cluster policy show {display_name(app)}` and fix or clear it."
         )

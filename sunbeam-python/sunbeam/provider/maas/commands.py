@@ -18,6 +18,7 @@ from snaphelpers import Snap
 
 from sunbeam.clusterd.service import ConfigItemNotFoundException
 from sunbeam.commands import backup_restore as backup_restore_cmds
+from sunbeam.commands import overrides as overrides_cmds
 from sunbeam.commands import refresh as refresh_cmds
 from sunbeam.commands import resize as resize_cmds
 from sunbeam.commands.configure import (
@@ -278,6 +279,8 @@ class MaasProvider(ProviderBase):
         cluster.add_command(resize_cmds.resize)
         cluster.add_command(refresh_cmds.refresh)
         cluster.add_command(backup_restore_cmds.backup_group)
+        cluster.add_command(overrides_cmds.config_group)
+        cluster.add_command(overrides_cmds.policy_group)
         cluster.add_command(remove_node)
         cluster.add_command(destroy_deployment_cmd)
         configure.add_command(configure_cmd)
