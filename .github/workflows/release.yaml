@@ -23,8 +23,9 @@ jobs:
       - name: Wait for snap store
         run: |
           set -x
-          sudo snap install lxd || true
-          sudo snap changes || true
+          timeout 60 sudo snap debug connectivity -v || true
+          timeout 90 sudo snap install lxd || true
+          sudo journalctl -u snapd --no-pager -n 80 || true
           exit 1
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             if sudo snap install lxd && sudo snap install snapcraft --classic; then
