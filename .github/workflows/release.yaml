@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - dev
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snap:
+    name: Build snap
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Wait for snap store
+        run: |
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if sudo snap install lxd && sudo snap install snapcraft --classic; then
+              exit 0
+            fi
+            sleep $((attempt * 15))
+          done
+          exit 1
+
+      - name: Build snap
+        id: build
+        uses: canonical/action-build@v1.3.0
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: snap
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+
+      - name: Attach snap to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "${{ github.event.release.tag_name }}"
+          "${{ steps.build.outputs.snap }}" --clobber
