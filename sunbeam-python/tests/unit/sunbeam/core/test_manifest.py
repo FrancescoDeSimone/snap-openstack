@@ -60,17 +60,19 @@ core:
 """
 
 test_manifest_incorrect_terraform_key = {
-    "software": {
-        "charms": {
-            "keystone-k8s": {
-                "channel": "2023.1/stable",
-                "revision": 234,
-                "config": {"debug": True},
-            }
-        },
-        "terraform": {
-            "fake-plan": {"source": "/home/ubuntu/tfplan"},
-        },
+    "core": {
+        "software": {
+            "charms": {
+                "keystone-k8s": {
+                    "channel": "2023.1/stable",
+                    "revision": 234,
+                    "config": {"debug": True},
+                }
+            },
+            "terraform": {
+                "fake-plan": {"source": "/home/ubuntu/tfplan"},
+            },
+        }
     }
 }
 
@@ -208,6 +210,19 @@ class TestManifest:
             }
         )
         assert manifest.find_charm("grafana-k8s") is charm
+
+    def test_get_feature_in_feature_group_by_qualified_name(self):
+        feature = manifest_mod.FeatureManifest()
+        manifest = manifest_mod.Manifest(
+            features={
+                "observability": manifest_mod.FeatureGroupManifest(
+                    root={"embedded": feature}
+                )
+            }
+        )
+
+        assert manifest.get_feature("embedded") is feature
+        assert manifest.get_feature("observability.embedded") is feature
 
     def test_find_charm_not_found(self):
         manifest = manifest_mod.Manifest(
